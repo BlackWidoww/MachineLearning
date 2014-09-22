@@ -1,1 +1,127 @@
-Blank
+---
+title: "Machine Learning Course Write-Up"
+author: "Courtney D. Shelley"
+date: "September 21, 2014"
+output: html_document
+---
+
+###Introduction
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Data sensors were placed on participants' arm, forearm, belt, and dumbbell.  Measurements were assessed in the x-, y-, and z- axes.  
+
+Read more: http://groupware.les.inf.puc-rio.br/har#literature#ixzz3DzMBhI3I
+
+
+###Data 
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+```{r readData, message=FALSE}
+library(caret); library(stats)
+
+
+#### Training data set
+fileURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileURL, destfile = "trainingData.csv", method="curl")
+training <- read.csv("trainingData.csv", header=TRUE)
+dim(training)
+
+#### Test data set
+fileURL2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileURL2, destfile = "testingData.csv", method="curl")
+testing <- read.csv("testingData.csv", header =TRUE)
+dim(testing)
+
+set.seed(12345)
+inTrain <- createDataPartition(y=training$classe, p=0.7, list=FALSE)
+model<-training[inTrain,]
+x.val<-training[-inTrain,]
+dim(model); dim(x.val)
+```
+
+The training data set consists of 19,622 observations on 160 variables.  The testing set consists of 20 observations on 160 variables.  Training data was split into a model-building set and a cross-validation set to test the model prior to deployment on the testing set.  70% of training observations were randomly assigned to the model category (13737 observations) and 30%  of training observations were randomly assigned to the cross-validating set (5885 observations).  
+
+##Model Creation
+
+###Isolation of important variables
+
+Due to the high number of available predictor variables, Principle Component Analysis (PCA) was used to isolate the most influential predictors.  Data was first reduced to 48 predictor variables relating to gyros, acceleration, roll, pitch, yaw, and magnent and processed columns of variation, standard deviation, total, max, and min were omitted.  
+
+
+```{r PCA}
+#### Identify important predictor variables by name
+gyros<-unique(grep("^gyros_", names(model), value=TRUE))   ## Retain only columns beginning in gyros_
+accel<-unique(grep("^accel_", names(model), value=TRUE))   ## Retain only columns beginning in accel_
+roll<-unique(grep("^roll_", names(model), value=TRUE))     ## Retain only columns beginning in roll_
+pitch<-unique(grep("^pitch_", names(model), value=TRUE))   ## Retain only columns beginning in pitch_
+yaw<-unique(grep("^yaw_", names(model), value=TRUE))       ## Retain only columns beginning in yaw_
+magnet<-unique(grep("^magnet_", names(model), value=TRUE)) ## Retain only columns beginning in magnet_
+greps<-c(gyros, accel, roll, pitch, yaw, magnet)   ## Concatenate retained column names
+
+data<-model[, greps]      ##Subset model to only columns contained in greps and 
+
+#### Identify important predictor variables by Principle Component Analysis
+######## I got this from http://strata.uga.edu/6370/lecturenotes/principalComponents.html
+data.pca <- prcomp(data, retx=TRUE, center=TRUE, scale=TRUE)
+sd <- data.pca$sdev
+loadings <- data.pca$rotation         # indicate positive correlations between variables and PCs
+rownames(loadings) <- colnames(data)
+scores <- data.pca$x
+
+
+         ### Scree Plot of PCs to determine which to retain ###
+var <- sd^2
+var.percent <- var/sum(var) *100
+barplot(var.percent, xlab="PC", ylab="Percent Variance", main="Scree Plot of Principle Components",
+        names.arg=1:length(var.percent), las=1,
+        ylim=c(0,max(var.percent)), col="gray")
+abline(h=1/ncol(data)*100, col="red")     # Retain PCs above this line
+
+var.percent[1:11]
+sum(var.percent[1:11])       # Retained PCs explain 80% of explained variance
+```
+
+### Model Build: Random Forest Classification
+```{r tree}
+library(randomForest)
+###### First time through course I tried Classification Tree.  Accuracy of 0.505 and I scored 8/20 on testing set.  
+
+data<-model[, c(greps, "classe")]             #Training subset with answers
+cross.validate<-x.val[, c(greps, "classe")]   #Cross Validate subset with answer
+test<-testing[,c(greps,"problem_id")]         #Testing subset with answers
+
+modFit<-randomForest(classe ~., data=data, ntree=500)
+modFit     # Error rate of 0.51%
+
+varImpPlot(modFit, sort=TRUE, n.var=11, main="Variable Importance")
+```
+
+###Model Test by Cross Validation
+```{r xval}
+X.Val<-predict(modFit, newdata=x.val, type="response")
+x.valRight<-X.Val==x.val$classe
+table(x.valRight, x.val$classe)
+```
+
+###Predictions on Test Data
+```{r test}
+predict<-predict(modFit, newdata=test, type="response")
+predictRight<-predict==test$problem_id
+table(predict, test$problem_id)
+```
+
+###Submission
+```{r}
+
+pml_write_files = function(x) {
+    n = length(x)
+    for(i in 1:n){
+      filename = paste0("problem_id_", i, ".txt")
+      write.table(x[i], file=filename,quote=FALSE, row.names=FALSE,col.names=FALSE)
+    }
+  }
+
+pml_write_files(predict)
+```
